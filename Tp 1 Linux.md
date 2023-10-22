@@ -190,9 +190,27 @@ Address:  195.7.117.146
 
 **Scan réseau**
 
-//
+il y a 2 machines dans le LAN auquel je suis connectés (j'était en partage de connexion)
 
-il y a  machines dans le LAN auquel je suis connectés
+```
+C:\Users\samyd>for /L %i in (1,1,254) do @ping -n 1 -w 1 192.168.143.%i
+[...]
+Envoi d’une requête 'Ping'  192.168.143.84 avec 32 octets de données :
+Réponse de 192.168.143.84 : octets=32 temps=5 ms TTL=64
+
+Statistiques Ping pour 192.168.143.84:
+    Paquets : envoyés = 1, reçus = 1, perdus = 0 (perte 0%),
+Durée approximative des boucles en millisecondes :
+    Minimum = 5ms, Maximum = 5ms, Moyenne = 5ms
+    
+Envoi d’une requête 'Ping'  192.168.143.234 avec 32 octets de données :
+Réponse de 192.168.143.234 : octets=32 temps<1ms TTL=128
+
+Statistiques Ping pour 192.168.143.234:
+    Paquets : envoyés = 1, reçus = 1, perdus = 0 (perte 0%),
+Durée approximative des boucles en millisecondes :
+    Minimum = 0ms, Maximum = 0ms, Moyenne = 0ms
+```
 
 ## *III. Le requin*
 
