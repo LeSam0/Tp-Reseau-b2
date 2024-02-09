@@ -1,0 +1,149 @@
+#!/bin/bash
+
+echo "Script start"
+
+sudo dnf update -y
+
+function hardening_ssh() {
+	echo Port 6525 >> /etc/ssh/ssh_config
+	echo PermitRootLogin no >> /etc/ssh/ssh_config
+	echo AuthenticationMethods publickey >> /etc/ssh/ssh_config
+	echo PubkeyAuthentication yes >> /etc/ssh/ssh_config
+	echo DenyUsers root >> /etc/ssh/ssh_config
+	echo AuthorizedKeysFile      .ssh/authorized_keyst >> /etc/ssh/ssh_config
+	echo IgnoreRhosts yes >> /etc/ssh/ssh_config
+	echo HostbasedAuthentication no >> /etc/ssh/ssh_config
+	echo PasswordAuthentication no >> /etc/ssh/ssh_config
+	echo PermitEmptyPasswords no >> /etc/ssh/ssh_config
+	echo Protocol 2 >> /etc/ssh/ssh_config
+	echo UsePAM no >> /etc/ssh/ssh_config
+	echo X11Forwarding no >> /etc/ssh/ssh_config
+	echo ClientAliveInterval 300 >> /etc/ssh/ssh_config
+	echo ClientAliveCountMax 0 >> /etc/ssh/ssh_config
+	echo Ciphers aes128-ctr,aes192-ctr,aes256-ctr >> /etc/ssh/ssh_config
+	echo HostKeyAlgorithms ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,ssh-rsa,ssh-dss >> /etc/ssh/ssh_config
+	echo KexAlgorithms ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group14-sha1,diffie-hellman-group-exchange-sha256 >> /etc/ssh/ssh_config
+	echo MACs hmac-sha2-256,hmac-sha2-512,hmac-sha1 >> /etc/ssh/ssh_config
+	sudo systemctl reload sshd
+    	sudo firewall-cmd --remove-service=ssh --permanent
+    	sudo firewall-cmd --remove-service=dhcpv6-client --permanent
+    	sudo firewall-cmd --remove-service=cockpit --permanent
+	sudo firewall-cmd --zone=public --add-port=6525/tcp --permanent
+	sudo firewall-cmd --zone=public --remove-port=22/tcp --permanent
+	sudo firewall-cmd --reload
+}
+
+function hardening_nginx() {
+    cat <<EOF >/etc/nginx/conf.d/app_nulle.conf 
+
+server {
+    server {
+        listen       80;
+        root         /var/www/app_nulle/;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers "EECDH+ECDSA+AESGCM EECDH+aRSA+AESGCM EECDH+ECDSA+SHA384 EECDH+ECDSA+SHA256 EECDH+aRSA+SHA384 EECDH+aRSA+SHA256 EECDH+aRSA+RC4 EECDH EDH+aRSA HIGH !RC4 !aNULL !eNULL !LOW !3DES !MD5 !EXP !PSK !SRP !DSS";
+        ssl_prefer_server_ciphers on;
+        limit_conn_zone $binary_remote_addr zone=conn_limit_per_ip:10m;
+        limit_conn conn_limit_per_ip 10;
+        server_tokens off;
+        add_header X-Frame-Options "SAMEORIGIN";        
+        }
+    }
+EOF
+    systemctl restart nginx
+}
+
+function chrony() {
+        sudo dnf install chrony -y
+}
+
+function fail2ban() {
+        dnf install fail2ban -y
+        cat <<EOF >/etc/fail2ban/jail.d/sshd.local
+[sshd]
+enabled = true
+port = ssh
+logpath = %(sshd_log)s
+maxretry = 3
+bantime = 600
+EOF
+        cat <<EOF >/etc/fail2ban/jail.d/nginx.local
+[nginx-http-auth]
+enabled = true
+port = http,https
+logpath = %(nginx_error_log)s
+bantime = 600
+EOF
+        systemctl enable --now fail2ban
+}
+
+function network_hardening() {
+    echo "Network hardening"
+    echo "Disabling IPv6"
+    cat <<EOF >/etc/sysctl.conf
+sysctl -w net.ipv6.conf.all.disable_ipv6 = 1
+sysctl -w net.ipv6.conf.default.disable_ipv6 = 1
+sysctl -w net.ipv4.conf.all.accept_source_route=0
+sysctl -w net.ipv4.conf.default.accept_source_route=0
+sysctl -w net.ipv4.ip_forward=0
+sysctl -w net.ipv4.route.flush=1
+sysctl -w net.ipv4.conf.all.send_redirects=0
+sysctl -w net.ipv4.conf.default.send_redirects=0
+sysctl -w net.ipv4.conf.all.accept_redirects=0
+sysctl -w net.ipv4.conf.default.accept_redirects=0
+sysctl -w net.ipv4.conf.all.secure_redirects=0
+sysctl -w net.ipv4.conf.default.secure_redirects=0
+sysctl -w net.ipv4.conf.all.log_martians=1
+sysctl -w net.ipv4.conf.default.log_martians=1
+sysctl -w net.ipv4.icmp_echo_ignore_broadcasts=1
+sysctl -w net.ipv4.icmp_ignore_bogus_error_responses=1
+sysctl -w net.ipv4.conf.all.rp_filter=1
+sysctl -w net.ipv4.conf.default.rp_filter=1
+sysctl -w net.ipv4.tcp_syncookies=1
+EOF
+    sysctl -p
+}
+
+function aide() {
+        sudo dnf install aide -y
+    local aide_conf_file="/etc/aide.conf"
+    echo "Creating Aide configuration file..."
+        cat <<EOF >"$aide_conf_file"
+# Aide Configuration File
+/etc/ssh/sshd_config CONTENT_EX
+/etc/chrony.conf CONTENT_EX
+/etc/system/systemd CONTENT_EX
+EOF
+
+        echo "Creating Aide systemd service and timer..."
+        cat <<EOF >/etc/systemd/system/aide.service
+[Unit]
+Description=Super service aide
+[Service]
+Type=simple
+ExecStart=/usr/sbin/aide --check
+EOF
+
+        cat <<EOF >/etc/systemd/system/aide.timer
+[Unit]
+Description=Run Aide regularly
+
+[Timer]
+OnBootSec=0
+OnUnitActiveSec=600
+
+[Install]
+WantedBy=timers.target
+EOF
+
+        systemctl enable --now aide.timer
+}
+
+hardening_ssh
+hardening_nginx
+fail2ban
+aide
+chrony
+network_hardening
+
+echo "Script terminée"
